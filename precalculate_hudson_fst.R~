@@ -1,0 +1,192 @@
+##########################################################
+###  Fst estimations for PAGE Clinvar variation           ##
+rm(list=ls())
+require(ggplot2)
+require(data.table)
+setwd("~/Dropbox/page/Final.PGx/6_fst.backgd/")
+theme_set(theme_gray(base_size = 18))
+options(digits=3)
+##########################################################
+##########################################################
+
+Fst= function(p1, p2, n1, n2) { 
+  
+  # Calculate Hudson Fst 
+  # where p1, p2 are allele frequencies
+  # and   n1, n2 are sample sizes 
+  n1=n1/2
+  n2=n2/2
+  a = p1 - p2
+  a2= a * a 
+  b = 1 - p1
+  c = 1 - p2
+  b2= b * p1
+  c2= c * p2
+  d = n1 - 1
+  e = n2 - 1
+  b3 = p1 * c
+  c3 = p2 * b
+  d2 = b2 / d
+  e2 = c2 / e
+  f = b3 + c3 
+  g = a2 - d2 - e2
+  return (g / f) 
+  
+}
+
+applyFst = function (index) Fst(x[index,1], x[index,2], x[index,3], x[index,4])
+#########################################################
+
+#### CHECK FORMULA: Fst (0.1,0.2,101,401)
+#### 0.003346154
+Fst (0.1,0.2,101,401)  
+
+# Above check should return 0.003346154
+#########################################################
+
+# Read in PAGE data 
+page=read.table("~/Dropbox/page/VERSION2/freq/ALL.POPS.TXT",header=T,sep="\t")
+toMatch= c("CHR.AA", "SNP.AA", "A1.AA","A2.AA", "MAF", "NCHROBS")
+matches <- grep(paste(toMatch,collapse="|"), colnames(page),value=T)  # Keep AF data get rid of redundant cols
+page <- subset(page, select = matches)
+names(page)[255:256]=c("MAF.VirginIslands.grp", "NCHROBS.VirginIslands.grp")
+# Need Names to be unique. 
+names(page)[79:80]=c("MAF.Europe-Overall.grp","NCHROBS.Europe-Overall.grp")
+names(page)[97:98]=c("MAF.HAN-hgdp.grp","NCHROBS.HAN-hgdp.grp")
+names(page)[243:244]=c("MAF.TU-hgdp.grp","NCHROBS.TU-hgdp.grp")
+names(page)[271:272]=c("MAF.total","NCHROBS.total")
+
+
+# ClinVar 
+clinvar=read.table("~/Dropbox/page/CONTENT_0.CRV/CLINVAR.DL/clinvar.tsv",sep = '\t',header=T, quote='', comment.char='')
+clinvar$partialid <- paste(clinvar$chrom, clinvar$pos, sep = ":")
+clinvar$bimid <- paste(clinvar$partialid, clinvar$ref, clinvar$alt, sep="-")
+clinvar$assertion="Other"
+clinvar[grep("1",clinvar$benign),]$assertion="Benign"
+clinvar[grep("1",clinvar$pathogenic),]$assertion="Pathogenic"
+clinvar[grep("1",clinvar$conflicted),]$assertion="Conflicted"
+clinvar[clinvar$clinical_significance=="Uncertain significance",]$assertion ="Uncertain"
+clinvar[clinvar$clinical_significance=="not provided",]$assertion ="Uncertain"
+clinvar[clinvar$clinical_significance=="risk factor",]$assertion ="Uncertain"
+clinvar[clinvar$clinical_significance=="other",]$assertion ="Uncertain"
+clinvar[clinvar$clinical_significance=="Uncertain significance;not provided",]$assertion ="Uncertain"
+clinvar$assertion=factor(clinvar$assertion, levels=c("Pathogenic","Uncertain","Conflicted","Other","Benign"),ordered=T)
+rsid=fread("~/Dropbox/page/crv.freeze1/id.maps/id1.idE.txt",header=T)
+clinvar=merge(clinvar,rsid,by.x="bimid",by.y="mine",all.x=TRUE)
+
+# CADD
+cadd=fread("~/Dropbox/page/cadd/COMBINED/out.lof+crv.cadd.tsv",header=T,sep="\t")
+cadd$partial=paste(cadd$`#Chrom`, cadd$Pos,sep=":")
+cadd$bimid=paste(cadd$partial,cadd$Ref,cadd$Alt,sep="-")
+
+# Read in Pgx data frame
+
+m=data.frame(fread('~/Dropbox/page/Final.PGx/1_annotate/out.MEGA-PAGE.PharmGKB.Full-Annotations.tsv'))
+
+#########################################################
+
+
+# Merge PAGE/1000 Genomes
+# Read in TGP Eur PGx
+
+tgp=read.table("~/Dropbox/page/VERSION2/freq/Mar07.pgx/K1G.PGX.txt",header=T,sep='') #FIXME need 1000Genomes AF for everyone 
+colnames(tgp)[1:4]=c("CHR.id","SNP.id", "A1.id","A2.id")
+toMatch= c("SNP.id", "A1.id","A2.id","MAF.EUR", "NCHROBS.EUR")
+matches <- grep(paste(toMatch,collapse="|"), colnames(tgp),value=T)  # Keep AF data get rid of redundant cols
+tgp <- subset(tgp, select = matches)
+tgp$SNP=paste(tgp$SNP.id,tgp$A2.id,tgp$A1.id,sep='-')
+tgp$bimid=paste(tgp$SNP.id,tgp$A2.id,tgp$A1.id,sep='-')
+#page=merge(page,tgp,by.x='SNP.AA',by.y='bimid') #2390/2600 vars - 92% 
+
+# Read TGP ClinVar
+#tgp2=read.table('/Users/esorokin/Dropbox/page/VERSION2/freq/Mar30.TGP-ClinVAR/1kg.Per-Pop.Mar31.txt',header=T,sep='')
+
+# Merge PAGE/CADD
+page=merge(page,cadd,by.x='SNP.AA',by.y='bimid')
+
+# Split out PGx and ClinVar content --ERROR FIXME 
+p=page[page$SNP.AA %in% m$SNP.AA,]
+notp=page[!page$SNP.AA %in% m$SNP.AA ,] # FIXME FIXME 
+
+# Then run matching algorithm and calculate Fst 
+
+# Simplify the 'Consequence' category 
+m$Consequence=as.character(m$Consequence)
+regulatory=c('3PRIME_UTR','5PRIME_UTR','DOWNSTREAM','INTERGENIC','NONCODING_CHANGE','REGULATORY','UPSTREAM','INTRONIC')
+splice=c('CANONICAL_SPLICE','SPLICE_SITE')
+m[m$Consequence %in% regulatory,]$Consequence='Non-coding'
+m[m$Consequence %in% splice,]$Consequence='Splicing'
+m[m$Consequence=="NON_SYNONYMOUS",]$Consequence='Missense'
+m[m$Consequence=="SYNONYMOUS",]$Consequence='Synonymous'
+m[m$Consequence=="STOP_GAINED",]$Consequence='Stop gain'
+m[m$Consequence=="FRAME_SHIFT",]$Consequence='Frameshift'
+table(m$Consequence)
+
+
+#########################################################
+
+# Which populations? 
+
+myMatches=grep('NCHROBS', colnames(page),value=T)  # Keep AF data get rid of redundant cols
+popSizes=subset(page, select = myMatches)
+gr500=data.frame(colMeans(popSizes))
+
+gr500$Population=gsub('NCHROBS.','',row.names(gr500))
+gr500$Population=gsub('.grp','',gr500$Population)
+bigGrps=gr500[gr500[,1]>=50,]$Population ## 400 * 2 b/c 2 Obs per individual. 
+bigGrps=bigGrps[!bigGrps %in% c("total","Americas", "EastAsia","Oceania","Oth")]      ## 15 populations remain 
+bigGrps=gsub('PAGE.','',bigGrps)       # There are 16 such populations
+bigGrps=gsub('-','.',bigGrps)       
+# Measure Fst 
+df=data.frame(variant=as.character(),maf.page=as.numeric(),maf.europe=as.numeric(), n.page=as.numeric(),n.europe=as.numeric(),fst=as.numeric())
+
+for (p in bigGrps){
+  
+  mycols=grep(p,names(page))
+  x=page[,c(mycols[1],79, mycols[2],80)]
+  fst=sapply(1:dim(x)[1],applyFst)
+  temp=cbind(page$SNP.AA,x,fst)
+  names(temp)=c("variant","maf.page","maf.hgdp_europe","n.page","n.hgdp_europe","fst")
+  temp$re=p
+  df=rbind(df,temp)
+  rm(temp)
+  rm(fst)
+  rm(x)
+  rm(mycols)
+}
+
+df=na.omit(df) # Get rid of NA's 
+
+
+#~#
+
+# Fst: PAGE europeans vs all other major groups 
+pdf('fst.16-populations.pdf',width=9,height=6)
+ggplot(df, aes(x=re, y=fst))+geom_jitter(shape=16, position=position_jitter(0.2)) + 
+  geom_boxplot(color="red",position="dodge",outlier.shape = NA,width=0.4)+
+  theme_bw()+theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=45))
+dev.off()
+
+# Let's add back in Assertions and Gold Stars 
+ann=clinvar[,c(1,27,22,28,8)]
+m=merge(df,ann,by.x="variant",by.y="bimid")
+
+df('fst.16-pops.byEvidence.pdf',width=9,height=6)
+ggplot(m, aes(x=re, y=fst,color=gold_stars))+geom_jitter(shape=16, position=position_jitter(0.2)) + 
+  geom_boxplot(color="red",position="dodge",outlier.shape = NA,width=0.4)+
+  theme_bw()+theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=45))+scale_color_brewer(palette="Dark2")
+dev.off()
+
+# Path 4 star variants 
+m=merge(df,ann,by.x="variant",by.y="bimid")
+
+m=m[m$assertion=="Pathogenic" & m$gold_stars==4 ,] #338 variants under consideration out of ~17K 
+pdf('fst.4-star-path.pdf',width=9,height=6)
+ggplot(m, aes(x=re, y=fst))+geom_jitter(shape=16, position=position_jitter(0.2)) + 
+  #geom_boxplot(color="red",position="dodge",outlier.shape = NA,width=0.4)+
+  theme_bw()+theme(axis.title.x=element_blank(), axis.text.x=element_text(angle=45))+scale_color_brewer(palette="Dark2")
+dev.off()
+m=m[order(-m$fst),]
+head(m)
+m=m[ m$maf.page >0.001,] # six CFTR variants
+
