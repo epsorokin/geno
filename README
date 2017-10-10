@@ -1,0 +1,9 @@
+popgen
+=====
+
+Repository for code related to analysis of large genetic datasets including analysis and visualization using site frequency spectra, variant segregation in global populations, allelic differentiation. 
+
+* Analysis and visualization of site frequency spectra in many populations
+* Calculate FST between pairs of populations using Hudson's estimator 
+* Stratified random sampling to obtain background variation for matched variants (by global Minor Allele frequency, functional effect, or other features)
+
